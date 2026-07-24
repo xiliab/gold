@@ -20,10 +20,6 @@ from src.config import (
 )
 
 def apply_kalman_filter(price_series, q=1e-4, r=1e-2):
-    """
-    自适应 1D 卡尔曼滤波器 (Adaptive Kalman Filter):
-    对秒级微观盘口的价格跳动剔除随机高频噪音，输出无延迟的最佳真实趋势估计。
-    """
     if price_series is None or len(price_series) == 0:
         return 0.0
     x_hat = float(price_series[0])
@@ -35,6 +31,24 @@ def apply_kalman_filter(price_series, q=1e-4, r=1e-2):
         x_hat = x_hat_minus + k_gain * (float(z) - x_hat_minus)
         p_var = (1.0 - k_gain) * p_var_minus
     return float(x_hat)
+
+def detect_market_regime(prices, window=30):
+    """
+    基于短线波动率与斜率识别市场当前状态 (Regime Switching)：
+    - TRENDING (高波/单边突破趋势市)
+    - RANGING (低波/箱体震荡整理市)
+    """
+    if prices is None or len(prices) < window:
+        return "RANGING", 0.5
+
+    sub_p = prices[-window:]
+    returns = np.diff(sub_p) / (sub_p[:-1] + 1e-8)
+    volatility = float(np.std(returns))
+    slope = float(abs((sub_p[-1] - sub_p[0]) / (sub_p[0] + 1e-8)))
+
+    regime_score = float(np.clip(volatility * 1200.0 + slope * 250.0, 0.0, 1.0))
+    regime = "TRENDING" if regime_score > 0.45 else "RANGING"
+    return regime, regime_score
 
 class TrendPredictor:
     def __init__(self, future_steps=None):
@@ -216,21 +230,24 @@ class TrendPredictor:
             inst_drift = inst_factor * INST_DRIFT_FACTOR * np.sqrt(np.arange(1, future_steps + 1))
         matcher_prices = matcher_prices + inst_drift
 
-        # 极小微观模型动态主导集成 (权重大写随今日实盘胜率 win_rate 与模型 MSE 拟合度自适应动态平滑演进: 15% ~ 85%)
-        # 1. 实盘胜率响应因子 f_win: 当胜率从 50% 攀升至 90% 时，f_win 从 0.0 动态提升至 1.0
+        # 市场状态识别 (Regime Switching)
+        regime, regime_score = detect_market_regime(prices)
+
+        # 极小微观模型动态主导集成 (结合实盘胜率 win_rate、模型 MSE 与 Regime 状态自适应演进)
         f_win = float(np.clip((win_rate - 50.0) / 40.0, 0.0, 1.0))
-
-        # 2. 模型 MSE 拟合质量因子 Q_tiny
         q_tiny = max(0.0, min(1.0, 1.0 - self.tiny_model.ema_mse / TINY_MSE_BASE)) if self.tiny_model.ema_mse > 0 else 0.5
-
-        # 3. 双因子联合主导权重公式: 胜率越高、小模型越准确，微观权重越大 (可突破至 85% 绝对主导)
         perf_score = 0.70 * f_win + 0.30 * q_tiny
-        tiny_w = float(np.clip(0.20 + 0.65 * perf_score, 0.15, 0.85))
 
-        # 若历史形态匹配度极高 (>92%)，为历史形态保留至少 30% 权重
+        if regime == "TRENDING":
+            # 单边突破市：提高微观动量 TinyModel 权重 (放大 1.25 倍)
+            tiny_w = float(np.clip(0.30 + 0.55 * perf_score + 0.20 * regime_score, 0.25, 0.85))
+        else:
+            # 震荡箱体市：提升历史形态匹配 Matcher 权重
+            tiny_w = float(np.clip(0.15 + 0.45 * perf_score, 0.15, 0.55))
+
         avg_sim = float(np.mean([m.get('similarity_pct', 70.0) for m in top_matches])) if top_matches else 70.0
         if avg_sim >= 92.0:
-            tiny_w = min(tiny_w, 0.70)
+            tiny_w = min(tiny_w, 0.65)
 
         matcher_w = 1.0 - tiny_w
 

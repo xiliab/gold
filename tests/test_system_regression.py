@@ -107,5 +107,30 @@ class TestSystemRegression(unittest.TestCase):
         self.assertFalse(np.any(np.isnan(feats)), "归一化特征不能包含 NaN 异常值")
         self.assertTrue(np.all(feats >= -3.0) and np.all(feats <= 3.0), "归一化特征应受限于 [-3.0, 3.0] 截断范围")
 
+    def test_06_regime_and_quantile_bounds(self):
+        """测试 Regime Switching 市场状态识别与 Quantile Loss 不对称风控包络带生成"""
+        from src.predictor import detect_market_regime
+        from src.corrector import AdaptiveFeedbackCorrector
+
+        prices_trending = np.sin(np.linspace(0, 10, 50)) * 5.0 + 880.0
+        regime, score = detect_market_regime(prices_trending)
+        self.assertIn(regime, ["TRENDING", "RANGING"])
+        self.assertGreaterEqual(score, 0.0)
+        self.assertLessEqual(score, 1.0)
+
+        corrector = AdaptiveFeedbackCorrector()
+        pred_p = np.array([880.0, 880.2, 880.5, 880.8, 881.0, 881.2])
+        hist_tracks = [
+            [880.0, 880.4, 880.8, 881.2, 881.5, 882.0],
+            [880.0, 879.8, 879.5, 879.2, 879.0, 878.5],
+            [880.0, 880.1, 880.3, 880.4, 880.5, 880.6]
+        ]
+        lower_b, upper_b = corrector.compute_quantile_bounds(pred_p, hist_tracks, 880.0)
+        self.assertEqual(len(lower_b), 6)
+        self.assertEqual(len(upper_b), 6)
+        for i in range(6):
+            self.assertLessEqual(lower_b[i], pred_p[i], "下轨应不高于预测中轨")
+            self.assertGreaterEqual(upper_b[i], pred_p[i], "上轨应不低于预测中轨")
+
 if __name__ == "__main__":
     unittest.main()

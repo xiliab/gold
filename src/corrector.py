@@ -125,6 +125,31 @@ class AdaptiveFeedbackCorrector:
         self._save_state()
         return self.high_bias_ema, self.low_bias_ema
 
+    def compute_quantile_bounds(self, predicted_prices, history_tracks, last_price, win_rate_factor=1.0):
+        """
+        基于历史 top 3 轨迹分位数 (Quantile Loss P10 & P90) 动态生成不对称风控包络带。
+        结合实盘胜率调解系数 k，提供准确非对称的上下限。
+        """
+        k = self.get_dynamic_k() * win_rate_factor
+        N = len(predicted_prices)
+        if history_tracks is None or len(history_tracks) == 0:
+            std = np.std(predicted_prices) if N > 1 else 0.5
+            half_band = max(0.3, std * k)
+            return np.round(predicted_prices - half_band, 2).tolist(), np.round(predicted_prices + half_band, 2).tolist()
+
+        tracks_arr = np.array(history_tracks)  # (M, N)
+        q_low = np.percentile(tracks_arr, 10, axis=0)   # P10 下轨分位数
+        q_high = np.percentile(tracks_arr, 90, axis=0)  # P90 上轨分位数
+
+        lower_b = predicted_prices + (q_low - predicted_prices) * k + self.low_bias_ema
+        upper_b = predicted_prices + (q_high - predicted_prices) * k + self.high_bias_ema
+
+        # 物理规则约束：上轨必须 >= predicted_prices，下轨必须 <= predicted_prices
+        lower_b = np.minimum(lower_b, predicted_prices - 0.05)
+        upper_b = np.maximum(upper_b, predicted_prices + 0.05)
+
+        return np.round(lower_b, 2).tolist(), np.round(upper_b, 2).tolist()
+
     def get_extrema_biases(self):
         return self.high_bias_ema, self.low_bias_ema
 
