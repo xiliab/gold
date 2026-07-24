@@ -272,7 +272,9 @@ def compute_prediction_payload(force_reload_data=False):
             "rest_of_day_low_time": rest_of_day_low_time,
             "high_bias_ema": round(float(high_bias_ema), 2),
             "low_bias_ema": round(float(low_bias_ema), 2),
-            "tiny_status": pred_result.get('tiny_status') if pred_result else None
+            "tiny_status": pred_result.get('tiny_status') if pred_result else None,
+            "regime": pred_result.get('regime', 'RANGING') if pred_result else 'RANGING',
+            "regime_score": float(pred_result.get('regime_score', 0.5)) if pred_result else 0.5
         }
     }
 

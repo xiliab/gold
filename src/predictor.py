@@ -597,6 +597,8 @@ class TrendPredictor:
             'rest_of_day_high_time': rest_of_day_high_time,
             'rest_of_day_low_time': rest_of_day_low_time,
             'tiny_status': tiny_status,
+            'regime': regime,
+            'regime_score': round(float(regime_score), 2),
             'low_confidence_match': any_low_conf,
             'msg': (
                 f"已提取 {valid_count} 段合格历史轨迹，"
