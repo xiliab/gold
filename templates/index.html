@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>黄金价格实时预测系统</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(22, 28, 45, 0.7);
+            --card-border: rgba(255, 215, 0, 0.15);
+            --gold-primary: #ffd700;
+            --gold-accent: #f39c12;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --green-glow: #10b981;
+            --red-glow: #ef4444;
+            --blue-glow: #3b82f6;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(255, 215, 0, 0.05) 0%, transparent 20%),
+                radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.05) 0%, transparent 20%);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .layout-container {
+            display: flex;
+            gap: 24px;
+            align-items: flex-start;
+        }
+
+        .main-content {
+            flex: 4;
+            min-width: 0; /* 防止子元素撑破 grid */
+        }
+
+        .right-sidebar {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            position: sticky;
+            top: 24px;
+        }
+
+        .sidebar-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .gold-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--gold-primary), var(--gold-accent));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #000;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.3);
+        }
+
+        h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(to right, #ffffff, var(--gold-primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .badge-tag {
+            background: rgba(255, 215, 0, 0.1);
+            color: var(--gold-primary);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        /* 顶部卡片看板 */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .card-label {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .card-value {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .price-up { color: var(--green-glow); }
+        .price-down { color: var(--red-glow); }
+
+        /* 主要图表区域 */
+        .chart-container {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            position: relative;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .legend-list {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        canvas {
+            width: 100% !important;
+            height: 480px !important;
+        }
+
+        /* Top 3 历史溯源卡片 */
+        .history-section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--gold-primary);
+        }
+
+        .history-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 16px;
+        }
+
+        .history-card {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .rank-badge {
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .similarity-score {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--green-glow);
+        }
+
+        .history-time {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .btn-refresh {
+            background: linear-gradient(135deg, var(--gold-primary), var(--gold-accent));
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .btn-refresh:hover { opacity: 0.9; }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--green-glow);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--green-glow);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--green-glow);
+        }
+        .chart-scroll-wrapper {
+            width: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+            position: relative;
+            scrollbar-width: thin;
+            scrollbar-color: var(--gold-primary) rgba(30, 41, 59, 0.5);
+        }
+        .chart-scroll-wrapper::-webkit-scrollbar {
+            height: 6px;
+        }
+        .chart-scroll-wrapper::-webkit-scrollbar-thumb {
+            background: var(--gold-primary);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-title">
+            <div class="gold-icon">Au</div>
+            <h1>黄金价格实时预测系统</h1>
+            <span class="badge-tag">GC=F 国际现货 · 人民币/克 · 1m 实时</span>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: center;">
+            <div id="statusPill" class="status-pill">
+                <div class="status-dot"></div>
+                <span id="statusText">运算引擎运行正常</span>
+            </div>
+            <!-- 倍计时移入 header，不占用卡片位置 -->
+            <div style="font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:5px;">
+                <span>刷新倒计时</span>
+                <span id="countdown" style="font-weight:600; color:var(--gold-primary);">00:30</span>
+            </div>
+            <button class="btn-refresh" onclick="fetchData()">刷新增量数据</button>
+        </div>
+    </div>
+
+    <div class="layout-container">
+        <!-- 左侧主体 80% -->
+        <div class="main-content">
+            <!-- 顶层指标看板 -->
+            <div class="metrics-grid">
+                <!-- 卡片1: 最新实测金价 -->
+        <div class="card">
+            <div class="card-label">当前金价</div>
+            <div class="card-value" id="currentPrice">--.--</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="currentTime">更新于 --:--</div>
+        </div>
+        <!-- 卡片2: 未来趋势预测 -->
+        <div class="card">
+            <div class="card-label">未来 6m 期望趋势</div>
+            <div class="card-value" id="forecastTrend">计算中...</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="forecastTarget">6m 目标价: --.--</div>
+        </div>
+        <!-- 卡片3: 今日剩余时间最低价 (建议买入区间) -->
+        <div class="card" style="border-color: rgba(16,185,129,0.3);">
+            <div class="card-label" style="color: #6ee7b7;">↓ 今日剩余预测最低价（参考买入）</div>
+            <div class="card-value price-up" id="todayLow" style="font-size:26px;">--.--</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="todayLowSub">待计算...</div>
+        </div>
+            <!-- 卡片4: 今日剩余时间最高价 (建议卖出区间) -->
+            <div class="card" style="border-color: rgba(239,68,68,0.3);">
+                <div class="card-label" style="color: #fca5a5;">↑ 今日剩余预测最高价（参考卖出）</div>
+                <div class="card-value price-down" id="todayHigh" style="font-size:26px;">--.--</div>
+                <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="todayHighSub">待计算...</div>
+            </div>
+        </div>
+
+        <!-- 图表卡片 -->
+    <div class="chart-container">
+        <div class="chart-header">
+            <div style="font-size: 16px; font-weight: 600;">
+                今日实测走势 · 未来 6 分钟预测
+                <span style="font-size: 11px; color: var(--text-muted); font-weight: normal; margin-left: 8px;">↔ 保持 4px 紧凑点距 · 可水平滑动追溯全天行情</span>
+            </div>
+            <div class="legend-list">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #10b981;"></div>
+                    <span>实际金价</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgba(234,179,8,0.6); border: 1px dashed rgba(234,179,8,0.8);"></div>
+                    <span>历史预测曲线</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ef4444;"></div>
+                    <span>未来 6 分钟预测</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgba(239, 68, 68, 0.2);"></div>
+                    <span>置信区间</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgba(148, 163, 184, 0.5);"></div>
+                    <span>Top 3 历史轨迹</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-scroll-wrapper" id="chartScrollWrapper">
+            <div id="chartInnerContainer" style="height: 100%; min-width: 100%; position: relative;">
+                <canvas id="goldChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+        <!-- Top 3 历史溯源 -->
+        <div class="history-section-title">Top 3 最相似历史日</div>
+        <div class="history-grid" id="historyGrid">
+            <!-- 动态渲染卡片 -->
+        </div>
+    </div> <!-- End Main Content -->
+
+    <!-- 右侧看板 20% -->
+    <div class="right-sidebar">
+        <!-- 卡片5: 波段操作建议 (波段获利/避险) -->
+        <div class="sidebar-card" id="adviceCard" style="border-color: rgba(59,130,246,0.3);">
+            <div class="card-label" style="color: #93c5fd; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; margin-bottom: 8px;">★ 波段交易建议 (赚钱/防亏)</div>
+            <div id="actionAdvice" style="font-size:15px; font-weight:800; padding:10px 12px; border-radius:10px; background:rgba(59,130,246,0.15); color:#60a5fa; margin-bottom:10px; border:1px solid rgba(59,130,246,0.3); text-align:center;">
+                计算建议中...
+            </div>
+            <!-- 波段时间与获利/风险空间卡片 -->
+            <div id="adviceBadges" style="display:none; flex-direction:column; gap:6px; margin-bottom:10px; font-size:11px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.25); padding:5px 8px; border-radius:6px;">
+                    <span style="color:var(--text-muted);">⏱️ 预估时间窗口:</span>
+                    <span id="waveTimeWindow" style="font-weight:bold; color:#e2e8f0;">--</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.25); padding:5px 8px; border-radius:6px;">
+                    <span style="color:var(--text-muted);">💰 预计获利/空间:</span>
+                    <span id="waveProfitSpace" style="font-weight:bold; font-size:12px;">--</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.25); padding:5px 8px; border-radius:6px;">
+                    <span style="color:var(--text-muted);">🛡️ 盈亏风控比:</span>
+                    <span id="waveRiskReward" style="font-weight:bold; color:#94a3b8;">--</span>
+                </div>
+            </div>
+            <!-- 大白话通俗口语总结 -->
+            <div id="adviceSummaryText" style="font-size:11px; line-height:1.45; color:#cbd5e1; background:rgba(15,23,42,0.6); padding:8px 10px; border-radius:6px; margin-bottom:10px; border-left:3px solid var(--gold-primary);">
+                准备分析行情...
+            </div>
+            <div style="font-size: 13px; color: var(--text-muted); display:flex; flex-direction:column; gap:6px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 8px;">
+                <div style="display:flex; justify-content:space-between;"><span>共识状态:</span> <span id="directionLabel" style="color:#bfdbfe; font-weight:bold;">分析中</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>置信率:</span> <span id="directionConfidence" style="color:#fff; font-weight:bold;">0%</span></div>
+                <div style="display:flex; justify-content:space-between; margin-top: 4px; font-size: 11px;">
+                    <span>多: <span id="upVotes" style="color:var(--green-glow); font-weight:bold;">0</span></span>
+                    <span>空: <span id="downVotes" style="color:var(--red-glow); font-weight:bold;">0</span></span>
+                    <span>平: <span id="flatVotes" style="color:#fff; font-weight:bold;">0</span></span>
+                </div>
+            </div>
+        </div>
+        <!-- 卡片6: 预测胜率与自学防守 -->
+        <div class="sidebar-card" style="border-color: rgba(168,85,247,0.3); flex: 1; display:flex; flex-direction:column; max-height: calc(100vh - 48px - 220px);">
+            <div class="card-label" style="color: #d8b4fe; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; margin-bottom: 12px;">🛡️ AI 自学防守引擎</div>
+            
+            <!-- 极小自适应模型在线自学透出 -->
+            <div style="background: linear-gradient(145deg, rgba(168,85,247,0.15), rgba(168,85,247,0.05)); padding: 12px; border-radius: 8px; border: 1px solid rgba(168,85,247,0.3); margin-bottom: 12px; box-shadow: 0 4px 12px rgba(168,85,247,0.1);">
+                <div style="display:flex; justify-content:space-between; align-items: center; font-size:13px; margin-bottom:8px;">
+                    <span style="color:#e9d5ff; font-weight:700; text-shadow: 0 0 8px rgba(168,85,247,0.4);">🤖 微观极小模型</span>
+                    <span id="tinyWeightText" style="background: rgba(168,85,247,0.2); color:#d8b4fe; font-size:10px; padding: 2px 6px; border-radius: 12px; border: 1px solid rgba(168,85,247,0.4);">主导权重 60%</span>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size:11px; color:#cbd5e1;">
+                    <div style="background: rgba(0,0,0,0.2); padding: 6px 8px; border-radius: 6px;">
+                        <div style="color:var(--text-muted); font-size:10px; margin-bottom:2px;">在线自学</div>
+                        <div><b id="tinyTrainCount" style="color:#fff; font-size:13px;">0</b> 次</div>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.2); padding: 6px 8px; border-radius: 6px;">
+                        <div style="color:var(--text-muted); font-size:10px; margin-bottom:2px;">残差 (MSE)</div>
+                        <div id="tinyMse" style="color:#34d399; font-weight:bold; font-size:12px;">0.0000</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom: 16px;">
+                <div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">今日实时胜率</div>
+                    <div class="card-value" id="winRateText" style="font-size:28px; color:#e9d5ff; line-height:1;">100%</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">防守边界系数</div>
+                    <div id="dynamicKText" style="font-size:16px; font-weight:bold; color:#c084fc;">1.0</div>
+                </div>
+            </div>
+            
+            <div class="card-label" style="color: var(--text-muted); font-size: 12px; margin-bottom: 8px;">闭环复盘日志 (按时间)</div>
+            <div style="font-size: 12px; color: var(--text-muted); flex: 1; overflow-y: auto; display:flex; flex-direction:column; gap: 8px;" id="aiLogsContainer">
+                <div style="padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;">等待首轮验证生成中...</div>
+            </div>
+        </div>
+    </div> <!-- End Right Sidebar -->
+    </div> <!-- End Layout Container -->
+
+    <script src="/static/app.js?v={{ cache_bust }}"></script>
+</body>
+</html>

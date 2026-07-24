@@ -1,0 +1,6 @@
+flask>=3.0.0
+# akshare>=1.12.0  # 仅 clean_and_reload.py 使用，主系统已弃用
+yfinance>=0.2.30
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
