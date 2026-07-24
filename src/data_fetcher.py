@@ -534,6 +534,50 @@ def fetch_spdr_holdings_bias():
     return _spdr_cache_value   # 失败时返回上次缓存值（而非总是 0.0）
 
 
+# ─── 美元指数与美债收益率跨市场因子缓存（15 分钟 TTL）─────────────
+_macro_cache_value = {'dxy_bias': 0.0, 'us10y_bias': 0.0}
+_macro_cache_time  = 0.0
+
+def fetch_macro_cross_asset_factors():
+    """
+    抓取美元指数 (DXY) 与 10 年期美债收益率 (US10Y) 5 日变动偏向因子 (-1.0 ~ 1.0)。
+    15 分钟 TTL 缓存机制，超时自动回退为 0.0（中性）。
+    """
+    global _macro_cache_value, _macro_cache_time
+    now = time.time()
+    if now - _macro_cache_time < _SPDR_TTL_SECONDS:
+        return _macro_cache_value
+
+    try:
+        import yfinance as yf
+        logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+        tickers = yf.Tickers('DX-Y.NYB ^TNX')
+        
+        # DXY
+        dxy_hist = tickers.tickers['DX-Y.NYB'].history(period="5d")
+        dxy_bias = 0.0
+        if dxy_hist is not None and len(dxy_hist) >= 2:
+            c_dxy = dxy_hist['Close'].values
+            dxy_slope = float(np.polyfit(np.arange(len(c_dxy)), c_dxy, 1)[0])
+            dxy_bias = float(np.clip(dxy_slope / (c_dxy[0] + 1e-8) * 200.0, -1.0, 1.0))
+
+        # US10Y
+        tnx_hist = tickers.tickers['^TNX'].history(period="5d")
+        us10y_bias = 0.0
+        if tnx_hist is not None and len(tnx_hist) >= 2:
+            c_tnx = tnx_hist['Close'].values
+            tnx_slope = float(np.polyfit(np.arange(len(c_tnx)), c_tnx, 1)[0])
+            us10y_bias = float(np.clip(tnx_slope / (c_tnx[0] + 1e-8) * 200.0, -1.0, 1.0))
+
+        _macro_cache_value = {'dxy_bias': dxy_bias, 'us10y_bias': us10y_bias}
+        _macro_cache_time = now
+        return _macro_cache_value
+    except Exception as e:
+        logging.warning(f"获取跨市场宏观因子提示: {e}")
+
+    return _macro_cache_value
+
+
 def calculate_volume_imbalance(df, window=30):
     """
     基于日内最新 window 根 K 线的价格动量与成交量偏向，

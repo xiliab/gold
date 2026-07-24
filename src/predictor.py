@@ -4,6 +4,11 @@ import logging
 from datetime import datetime, timedelta
 from collections import Counter
 from src.tiny_model import TinyResidualPredictor, extract_features
+from src.data_fetcher import (
+    fetch_spdr_holdings_bias,
+    calculate_volume_imbalance,
+    fetch_macro_cross_asset_factors
+)
 from src.config import (
     FUTURE_STEPS, INST_DRIFT_FACTOR, BIG_MOVE_THRESH_BASE,
     BIG_MOVE_MIN_MULTIPLIER, BIG_MOVE_MAX_MULTIPLIER,
@@ -229,9 +234,13 @@ class TrendPredictor:
 
         matcher_w = 1.0 - tiny_w
 
+        macro_factors = fetch_macro_cross_asset_factors()
+        dxy_b = macro_factors.get('dxy_bias', 0.0) if macro_factors else 0.0
+        us10y_b = macro_factors.get('us10y_bias', 0.0) if macro_factors else 0.0
+
         if df is not None and len(df) >= 20:
-            # 打包传入 top_matches，提取 11 维历史-实时深度融合特征向量
-            feat = extract_features(df, inst_factor, top_matches)
+            # 打包传入 top_matches 与跨市场宏观因子，提取 20 维深度融合特征向量
+            feat = extract_features(df, inst_factor, top_matches, dxy_bias=dxy_b, us10y_bias=us10y_b)
             tiny_prices = self.tiny_model.predict_price_path(current_last_price, feat)
             if len(tiny_prices) < len(matcher_prices):
                 tiny_prices = np.pad(tiny_prices, (0, len(matcher_prices) - len(tiny_prices)), mode='edge')

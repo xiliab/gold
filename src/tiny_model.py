@@ -11,9 +11,15 @@ import time
 from src.db_init import DB_PATH, get_db_connection
 
 # 每个特征维度的规范化统计量（均值/标准差），基于真实黄金市场数据经验值
-# 用于将不同量纲的特征归一化到均匀的 [-1, 1] 分布，避免大数值特征主导梯度
-_FEAT_MEAN = np.array([0.0,    0.0,    0.05,  0.0,    0.0,    0.0,    0.0,   0.0,   0.70,   0.0,   0.0], dtype=float)
-_FEAT_STD  = np.array([0.5,    0.15,   0.04,  0.08,   0.12,   0.15,   0.5,   0.5,   0.15,   0.5,   0.10], dtype=float)
+# 用于将 20 维不同量纲的特征归一化到均匀的 [-1, 1] 分布，避免大数值特征主导梯度
+_FEAT_MEAN = np.array([
+    0.0,    0.0,    0.05,  0.0,    0.0,    0.0,    0.0,   0.0,   0.70,   0.0,   0.0,
+    0.0,    0.0,    0.02,  0.05,   0.50,   0.0,    0.0,   0.0,   0.0
+], dtype=float)
+_FEAT_STD  = np.array([
+    0.5,    0.15,   0.04,  0.08,   0.12,   0.15,   0.5,   0.5,   0.15,   0.5,   0.10,
+    0.10,   0.5,    0.02,  0.03,   0.25,   0.10,   0.5,   0.5,   0.5
+], dtype=float)
 
 
 def _calculate_rsi(series, period=14):
@@ -26,14 +32,15 @@ def _calculate_rsi(series, period=14):
     return rsi.iloc[-1] if not rsi.empty and not np.isnan(rsi.iloc[-1]) else 50.0
 
 
-def extract_features(df, spdr_bias=0.0, top_matches=None):
+def extract_features(df, spdr_bias=0.0, top_matches=None, dxy_bias=0.0, us10y_bias=0.0):
     """
-    从近期 K 线序列提取 11 维微观+历史深度融合特征向量 x：
-    - 前 8 维：RSI, EMA乖离率, ATR波动率, 3m/6m/15m动量, 成交量偏向, SPDR持仓偏向
-    - 后 3 维：历史切片平均相似度, 历史共识比例, 历史加权预期收益率
+    从近期 K 线序列及跨市场关联资产抽取 20 维微观+宏观+量价深度融合特征向量 x：
+    - 01-08 维：RSI, EMA乖离率, ATR波动率, 3m/6m/15m动量, 成交量偏向, SPDR持仓偏向
+    - 09-11 维：历史切片平均相似度, 历史共识比例, 历史加权预期收益率
+    - 12-20 维：VWAP偏离度, OBV趋势斜率, 5m/15m波动率Cluster, 60m高低位分位数, 动量加速度, 美元/美债联动, 宏观敏感度
     """
     if df is None or len(df) < 20:
-        return np.zeros(11)
+        return np.zeros(20)
 
     prices = df['close'].values
     vols = df['volume'].values if 'volume' in df.columns else np.ones(len(prices))
@@ -71,7 +78,7 @@ def extract_features(df, spdr_bias=0.0, top_matches=None):
     # 7. 机构持仓偏向
     f_spdr = float(np.clip(spdr_bias, -1.0, 1.0))
 
-    # 8. 9. 10. 新增 3 维历史匹配置信度与形态共识特征
+    # 8. 9. 10. 历史匹配置信度与形态共识特征
     f_hist_sim = 0.70
     f_hist_consensus = 0.0
     f_hist_return = 0.0
@@ -80,7 +87,6 @@ def extract_features(df, spdr_bias=0.0, top_matches=None):
         sims = [m.get('similarity_pct', 70.0) / 100.0 for m in top_matches]
         f_hist_sim = float(np.mean(sims))
 
-        # 匹配切片的历史未来多空共识比例 (-1.0 ~ +1.0)
         future_ends = [m.get('track', [p_last])[-1] - m.get('track', [p_last])[0] for m in top_matches if 'track' in m and len(m['track']) > 0]
         if future_ends:
             up_c = sum(1 for e in future_ends if e > 0)
@@ -88,8 +94,44 @@ def extract_features(df, spdr_bias=0.0, top_matches=None):
             f_hist_consensus = float((up_c - down_c) / max(len(future_ends), 1))
             f_hist_return = float(np.mean(future_ends) / (p_last + 1e-8) * 100.0)
 
-    raw = np.array([f_rsi, f_ema_dist, f_atr, f_mom3, f_mom6, f_slope, f_vol_imb, f_spdr,
-                    f_hist_sim, f_hist_consensus, f_hist_return], dtype=float)
+    # 11. VWAP (成交量加权平均价) 偏离度 (%)
+    vwap = np.sum(prices[-20:] * vols[-20:]) / (np.sum(vols[-20:]) + 1e-8)
+    f_vwap_bias = float((p_last - vwap) / (vwap + 1e-8) * 100.0)
+
+    # 12. OBV (能量潮) 趋势斜率
+    obv_changes = np.sign(np.diff(prices[-10:])) * vols[-9:]
+    f_obv_slope = float(np.mean(obv_changes) / (np.mean(vols[-9:]) + 1e-8))
+
+    # 13, 14. 5m / 15m 波动率 Cluster
+    pct_changes_5m = np.diff(prices[-5:]) / (prices[-5:-1] + 1e-8)
+    pct_changes_15m = np.diff(prices[-15:]) / (prices[-15:-1] + 1e-8)
+    f_vol_cluster_5m = float(np.std(pct_changes_5m))
+    f_vol_cluster_15m = float(np.std(pct_changes_15m))
+
+    # 15. 60m 窗口高低点分位数 [0.0, 1.0]
+    p_60 = prices[-60:] if len(prices) >= 60 else prices
+    min_p, max_p = np.min(p_60), np.max(p_60)
+    f_quantile_60m = float((p_last - min_p) / (max_p - min_p + 1e-8))
+
+    # 16. 动量加速度 (Mom3 - Mom6)
+    f_mom_accel = f_mom3 - f_mom6
+
+    # 17. 美元指数 DXY 联动偏向
+    f_dxy_bias = float(np.clip(dxy_bias, -1.0, 1.0))
+
+    # 18. 10年期美债收益率 US10Y 联动偏向
+    f_us10y_bias = float(np.clip(us10y_bias, -1.0, 1.0))
+
+    # 19, 20. 宏观高频波动与趋势强度
+    f_macro_sensitivity = float(np.abs(f_dxy_bias) + np.abs(f_us10y_bias)) / 2.0
+    f_trend_strength = float(np.abs(f_slope))
+
+    raw = np.array([
+        f_rsi, f_ema_dist, f_atr, f_mom3, f_mom6, f_slope, f_vol_imb, f_spdr,
+        f_hist_sim, f_hist_consensus, f_hist_return,
+        f_vwap_bias, f_obv_slope, f_vol_cluster_5m, f_vol_cluster_15m,
+        f_quantile_60m, f_mom_accel, f_dxy_bias, f_us10y_bias, f_macro_sensitivity
+    ], dtype=float)
 
     # Z-Score 归一化：对齐各维度量纲，防止梯度方向偏斜
     normalized = (raw - _FEAT_MEAN) / (_FEAT_STD + 1e-8)
@@ -112,16 +154,16 @@ def _tanh_grad(h):
 class TinyResidualPredictor:
     """
     纯 NumPy 实现的极小自适应单隐藏层网络预测模型:
-    - 输入:  11 维 Z-Score 归一化微观+历史融合特征向量 x
-    - 隐藏层: W1 (11→16) + Tanh，提供对称非线性表达能力
+    - 输入:  20 维 Z-Score 归一化微观+历史融合特征向量 x
+    - 隐藏层: W1 (20→16) + Tanh，提供对称非线性表达能力
     - 输出层: W2 (16→6)，预测未来 6 步收益率残差
     - 在线学习: Momentum SGD + 全局 L2 梯度裁剪 + 渐进式输出裁剪 + 自适应学习率衰减
     """
 
-    HIDDEN = 16  # 隐藏层神经元数量
-
-    def __init__(self, n_features=11, future_steps=6, lr=0.02, l2_reg=0.001):
+    def __init__(self, n_features=20, hidden_dim=16, future_steps=6, lr=0.01, l2_reg=0.001, db_path=DB_PATH):
         self.n_features = n_features
+        self.hidden_dim = hidden_dim
+        self.HIDDEN = hidden_dim
         self.future_steps = future_steps
         self.lr_init = lr        # 初始学习率
         self.lr = lr
@@ -162,9 +204,28 @@ class TinyResidualPredictor:
                 w1_arr = np.array(data['W1'])
                 if w1_arr.size == self.n_features * self.HIDDEN:
                     self.W1 = w1_arr.reshape(self.n_features, self.HIDDEN)
-                    self.b1 = np.array(data['b1'])
-                    self.W2 = np.array(data['W2']).reshape(self.HIDDEN, self.future_steps)
-                    self.b2 = np.array(data['b2'])
+                    w1_arr = np.array(data['W1'])
+                    if w1_arr.shape == self.W1.shape:
+                        self.W1 = w1_arr
+                    else:
+                        r_min = min(w1_arr.shape[0], self.W1.shape[0])
+                        c_min = min(w1_arr.shape[1], self.W1.shape[1])
+                        self.W1[:r_min, :c_min] = w1_arr[:r_min, :c_min]
+
+                    b1_arr = np.array(data['b1'])
+                    self.b1[:len(b1_arr)] = b1_arr[:len(self.b1)]
+
+                    w2_arr = np.array(data['W2'])
+                    if w2_arr.shape == self.W2.shape:
+                        self.W2 = w2_arr
+                    else:
+                        r_min = min(w2_arr.shape[0], self.W2.shape[0])
+                        c_min = min(w2_arr.shape[1], self.W2.shape[1])
+                        self.W2[:r_min, :c_min] = w2_arr[:r_min, :c_min]
+
+                    b2_arr = np.array(data['b2'])
+                    self.b2[:len(b2_arr)] = b2_arr[:len(self.b2)]
+
                     self.train_count = data.get('train_count', 0)
                     self.ema_mse = data.get('ema_mse', 0.0)
                     if self.train_count > 0:

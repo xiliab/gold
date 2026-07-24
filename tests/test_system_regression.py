@@ -56,9 +56,9 @@ class TestSystemRegression(unittest.TestCase):
             self.assertFalse(np.isnan(item['similarity_pct']))
 
     def test_03_tiny_model_online_learning_stability(self):
-        """测试 TinyModel 在线 SGD 梯度的稳定性，防 NaN/爆炸"""
-        model = TinyResidualPredictor()
-        dummy_features = np.random.randn(11)
+        """测试 TinyModel 在 20 维输入下在线 SGD 梯度的稳定性，防 NaN/爆炸"""
+        model = TinyResidualPredictor(n_features=20)
+        dummy_features = np.random.randn(20)
         
         pred_before = model.predict_returns(dummy_features)
         self.assertEqual(len(pred_before), FUTURE_STEPS)
@@ -91,6 +91,21 @@ class TestSystemRegression(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertIn('predicted_prices', result)
         self.assertIn('valid_count', result)
+
+    def test_05_extract_20d_features(self):
+        """测试 20 维多维量价与跨市场高频特征抽取的规范性"""
+        from src.tiny_model import extract_features
+        df_mock = pd.DataFrame({
+            'open': np.linspace(880, 882, 30),
+            'high': np.linspace(880.5, 882.5, 30),
+            'low': np.linspace(879.5, 881.5, 30),
+            'close': np.linspace(880.1, 882.1, 30),
+            'volume': np.random.randint(10, 100, 30)
+        })
+        feats = extract_features(df_mock, spdr_bias=0.2, dxy_bias=-0.15, us10y_bias=-0.05)
+        self.assertEqual(len(feats), 20, "提取的特征维数应当正好为 20 维")
+        self.assertFalse(np.any(np.isnan(feats)), "归一化特征不能包含 NaN 异常值")
+        self.assertTrue(np.all(feats >= -3.0) and np.all(feats <= 3.0), "归一化特征应受限于 [-3.0, 3.0] 截断范围")
 
 if __name__ == "__main__":
     unittest.main()
