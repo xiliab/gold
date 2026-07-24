@@ -20,6 +20,10 @@ MIN_SIMILARITY = 70.0                   # 最低相似度门槛（%）
 DECAY_RATE = 0.0                        # 时间衰减率（0.0 为全序列均匀等权比对，从06:00至今全过程对齐）
 MATCH_ALPHA = 0.5                       # 匹配权重中历史权重占比
 SMOOTH_WINDOW_SIZE = 5                  # 趋势平滑窗口（抹平 1m 噪音，防过度拘泥于微观毛刺）
+USE_FAST_DTW = True                     # 是否启用 FastDTW / 带约束 DTW 提升相位匹配精度
+DTW_WINDOW_RADIUS = 10                  # DTW Sakoe-Chiba 带约束规整半径（控制时间轴缩放范围）
+SEARCH_INDEX_ACCELERATION = True        # 开启特征预过滤向量索引加速（降低千万点矩阵计算延时）
+
 
 # ── 预测模型 ──────────────────────────────────────────
 SOFTMAX_TEMPERATURE = 10.0              # Softmax 温度参数，控制权重集中程度

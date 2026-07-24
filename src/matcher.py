@@ -4,15 +4,17 @@ import time
 import logging
 
 
-from src.config import NMS_RADIUS, MIN_SIMILARITY, DECAY_RATE, MATCH_ALPHA
+from src.config import NMS_RADIUS, MIN_SIMILARITY, DECAY_RATE, MATCH_ALPHA, USE_FAST_DTW, DTW_WINDOW_RADIUS, SEARCH_INDEX_ACCELERATION
 from src.utils import get_trading_date
 
 class CurveMatcher:
-    def __init__(self, nms_radius=None, decay_rate=None, alpha=None, min_similarity=None):
+    def __init__(self, nms_radius=None, decay_rate=None, alpha=None, min_similarity=None, use_fast_dtw=None, dtw_radius=None):
         self.nms_radius = nms_radius if nms_radius is not None else NMS_RADIUS
         self.decay_rate = decay_rate if decay_rate is not None else DECAY_RATE
         self.alpha = alpha if alpha is not None else MATCH_ALPHA
         self.min_similarity = min_similarity if min_similarity is not None else MIN_SIMILARITY
+        self.use_fast_dtw = use_fast_dtw if use_fast_dtw is not None else USE_FAST_DTW
+        self.dtw_radius = dtw_radius if dtw_radius is not None else DTW_WINDOW_RADIUS
         
         # 内存常驻历史矩阵缓存 (0ms 极速碰撞)
         self._cache_key = None
@@ -22,6 +24,34 @@ class CurveMatcher:
 
         # 日内动态淘汰剪枝池 (Dynamic Candidate Pruning Pool)
         self._pool_trading_date = None
+
+    def compute_constrained_dtw_distance(self, seq1, seq2, window_radius=None):
+        """
+        带 Sakoe-Chiba 窗约束的极速 DTW (Dynamic Time Warping) 算法。
+        专门纠正行情走势中由于节奏变频导致的“时间相位错位/微幅延迟与提前”。
+        """
+        radius = window_radius if window_radius is not None else self.dtw_radius
+        N = len(seq1)
+        M = len(seq2)
+        window = max(radius, abs(N - M))
+
+        dtw_matrix = np.full((N + 1, M + 1), np.inf)
+        dtw_matrix[0, 0] = 0.0
+
+        for i in range(1, N + 1):
+            j_start = max(1, i - window)
+            j_end = min(M + 1, i + window + 1)
+            for j in range(j_start, j_end):
+                cost = (seq1[i - 1] - seq2[j - 1]) ** 2
+                dtw_matrix[i, j] = cost + min(
+                    dtw_matrix[i - 1, j],
+                    dtw_matrix[i, j - 1],
+                    dtw_matrix[i - 1, j - 1]
+                )
+
+        dist = np.sqrt(dtw_matrix[N, M]) / float(N)
+        return float(dist)
+
     def z_score_normalize(self, series):
         std = np.std(series)
         if std == 0:
@@ -192,8 +222,14 @@ class CurveMatcher:
                 if suppressed[idx]:
                     continue
 
-                sim_pct = round(float(similarity_pcts[idx]), 2)
-                score_val = float(scores[idx])
+                dtw_sim_bonus = 0.0
+                if self.use_fast_dtw:
+                    dtw_dist = self.compute_constrained_dtw_distance(Q_z, H_matrix[idx])
+                    # DTW 距离越小，相似度加分越高（映射为 0~5% 的相位修正奖励）
+                    dtw_sim_bonus = np.clip((0.20 - dtw_dist) * 25.0, -5.0, 5.0)
+
+                sim_pct = round(float(np.clip(similarity_pcts[idx] + dtw_sim_bonus, 0.0, 100.0)), 2)
+                score_val = float(1.0 - sim_pct / 100.0)
 
                 if sim_pct < effective_threshold:
                     continue
@@ -208,6 +244,7 @@ class CurveMatcher:
                     'score': score_val,
                     'similarity_pct': sim_pct,
                     'corr': float(r_corr[idx]),
+                    'dtw_bonus': round(float(dtw_sim_bonus), 2),
                     'low_confidence': attempt > 0
                 })
 
